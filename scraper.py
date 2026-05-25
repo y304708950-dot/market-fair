@@ -41,8 +41,14 @@ class MarketScraper:
         # 方法2: 尝试豆瓣同城
         self._scrape_douban()
         
-        # 方法3: 添加一些真实存在的市集数据（基于公开信息）
+        # 方法3: 尝试从大麦网获取
+        self._scrape_damai()
+        
+        # 方法4: 添加一些真实存在的市集数据（基于公开信息）
         self._add_curated_markets()
+        
+        # 去重
+        self._deduplicate()
         
         return self.markets
     
@@ -151,9 +157,68 @@ class MarketScraper:
             except Exception as e:
                 print(f"  {city}: 抓取失败 - {e}")
     
+    def _scrape_damai(self):
+        """从大麦网抓取市集活动"""
+        print("\n[3/4] 尝试抓取大麦网...")
+        
+        try:
+            # 大麦网搜索URL
+            url = "https://search.damai.cn/searchajax.html"
+            params = {
+                'keyword': '市集',
+                'cty': '',
+                'ctl': '',
+                'sctl': '',
+                'tsg': 0,
+                'st': '',
+                'et': '',
+                'order=1': '',
+                'pageSize': 30,
+                'currPage': 1
+            }
+            
+            response = self.session.get(url, params=params, timeout=15)
+            
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    if 'pageData' in data and 'resultData' in data['pageData']:
+                        results = data['pageData']['resultData']
+                        print(f"  找到 {len(results)} 个活动")
+                        
+                        for item in results[:10]:
+                            try:
+                                market = {
+                                    'name': item.get('name', ''),
+                                    'city': item.get('cityname', ''),
+                                    'address': item.get('venue', {}).get('name', ''),
+                                    'start_date': item.get('showTime', '').split(' ')[0] if item.get('showTime') else '',
+                                    'end_date': item.get('showEndTime', '').split(' ')[0] if item.get('showEndTime') else '',
+                                    'image': item.get('verticalPic', '') or item.get('horizontalPic', ''),
+                                    'category': self._categorize_market(item.get('name', '')),
+                                    'source': 'damai',
+                                    'source_url': f"https://detail.damai.cn/item.htm?id={item.get('id', '')}"
+                                }
+                                
+                                if market['name'] and market['city']:
+                                    # 省份映射
+                                    market['province'] = self._city_to_province(market['city'])
+                                    self.markets.append(market)
+                                    
+                            except Exception as e:
+                                continue
+                                
+                except json.JSONDecodeError:
+                    print("  JSON解析失败")
+            else:
+                print(f"  请求失败: {response.status_code}")
+                
+        except Exception as e:
+            print(f"  抓取失败: {e}")
+    
     def _add_curated_markets(self):
         """添加经过整理的真实市集数据"""
-        print("\n[3/3] 加载整理的市集数据...")
+        print("\n[4/4] 加载整理的市集数据...")
         
         # 基于公开信息整理的真实市集数据
         curated_markets = [
@@ -370,6 +435,55 @@ class MarketScraper:
             return '创意市集'
         else:
             return '综合市集'
+    
+    def _city_to_province(self, city):
+        """城市名称转省份"""
+        city_province_map = {
+            '北京': '北京',
+            '上海': '上海',
+            '广州': '广东',
+            '深圳': '广东',
+            '杭州': '浙江',
+            '成都': '四川',
+            '南京': '江苏',
+            '武汉': '湖北',
+            '重庆': '重庆',
+            '西安': '陕西',
+            '厦门': '福建',
+            '长沙': '湖南',
+            '济南': '山东',
+            '青岛': '山东',
+            '天津': '天津',
+            '苏州': '江苏',
+            '郑州': '河南',
+            '大连': '辽宁',
+            '昆明': '云南',
+            '合肥': '安徽',
+        }
+        
+        for key, value in city_province_map.items():
+            if key in city:
+                return value
+        
+        return city  # 如果找不到，返回城市名本身
+    
+    def _deduplicate(self):
+        """去重"""
+        seen = set()
+        unique_markets = []
+        
+        for market in self.markets:
+            # 使用名称和城市作为唯一标识
+            key = f"{market.get('name', '')}-{market.get('city', '')}"
+            if key not in seen:
+                seen.add(key)
+                unique_markets.append(market)
+        
+        removed = len(self.markets) - len(unique_markets)
+        if removed > 0:
+            print(f"\n去重: 移除 {removed} 条重复数据")
+        
+        self.markets = unique_markets
     
     def save_data(self, filename='markets_data.json'):
         """保存数据到JSON文件"""
