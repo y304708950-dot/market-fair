@@ -384,6 +384,11 @@ body {
     font-weight: 500;
 }
 
+.tag-secondary {
+    background-color: #FFF3E0;
+    color: #E65100;
+}
+
 .card-time {
     font-size: 12px;
     color: var(--text-muted);
